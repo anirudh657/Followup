@@ -1,0 +1,55 @@
+# Local development stack.
+# Supabase itself runs via the Supabase CLI (`supabase start`), which manages its own
+# containers — this compose file runs OUR two services against it.
+# Usage:  supabase start   &&   docker compose up --build
+
+services:
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    env_file: .env
+    environment:
+      # Inside compose, the pipeline is reachable by service name.
+      PIPELINE_URL: http://pipeline:8000
+    depends_on:
+      pipeline:
+        condition: service_healthy
+    # host.docker.internal lets containers reach the CLI-managed Supabase on the host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  pipeline:
+    build:
+      context: ./services/pipeline
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      # Supabase local default ports (supabase start): API 54321, Postgres 54322.
+      DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:54322/postgres
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # One-off worker process for the job queue (same image, different command).
+  worker:
+    build:
+      context: ./services/pipeline
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.worker"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:54322/postgres
+    depends_on:
+      pipeline:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
